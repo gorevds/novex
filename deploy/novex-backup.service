@@ -1,0 +1,25 @@
+[Unit]
+Description=Daily backup of novex.db (sqlite .backup + gzip + 14d rotation)
+After=network.target
+
+[Service]
+Type=oneshot
+User=novex
+Group=novex
+WorkingDirectory=/opt/novex
+Environment=TZ=Europe/Moscow
+# Скрипт идёт из репо, install.sh синхронизирует его в /opt/novex/deploy/.
+ExecStart=/bin/bash /opt/novex/deploy/backup.sh
+StandardOutput=journal
+StandardError=journal
+
+# Бэкап в реальности использует ~50МБ (sqlite3 .backup + gzip pipe);
+# 128МБ с запасом. 10 минут — хватает на 40МБ БД с gzip -6.
+MemoryMax=128M
+CPUQuota=200%
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+ReadWritePaths=/opt/novex/data
+TimeoutStartSec=600

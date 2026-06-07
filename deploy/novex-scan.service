@@ -1,0 +1,40 @@
+[Unit]
+Description=Daily price scan — all 10 developers (PIK + 9 others) → SQLite
+After=network.target
+# До R5 рефактора (2026-05-25) было два юнита: novex-scan (только ПИК) и
+# novex-scan-dev (только не-ПИК), скованных OnSuccess-цепью. После R1+R5
+# scan_dev обрабатывает все 10 застройщиков одной командой — двух юнитов
+# больше не нужно. install.sh удаляет novex-scan-dev.{service,timer} на
+# upgrade. Имя «novex-scan» оставлено как label — деплоймент-имя.
+
+[Service]
+Type=oneshot
+User=novex
+Group=novex
+WorkingDirectory=/opt/novex
+Environment=TZ=Europe/Moscow
+# --all обходит всех 10 застройщиков из реестра novex.sources.* параллельно
+# (--workers=6). ПИК через bin.sources.pik (новый адаптер) — никаких
+# отдельных команд.
+ExecStart=/opt/novex/venv/bin/python -m bin.scan_dev --db /opt/novex/data/novex.db --all
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits. После R5 рефактора (2026-05-25) один novex-scan ведёт
+# все 10 застройщиков параллельно (включая PIK с inner ThreadPool). Пик
+# памяти подскочил с ~125МБ (только non-PIK) до ~600МБ (PIK API возвращает
+# 10k+ JSON-items, x6 параллельных PIK-workers держат buffers). 1024МБ —
+# x1.6 от наблюдаемого пика. Сервер имеет ~16GB; ни один сосед на VM не
+# затронут даже при полной утилизации этого лимита.
+MemoryMax=1024M
+CPUQuota=400%
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+NoNewPrivileges=yes
+ReadWritePaths=/opt/novex/data
+TimeoutStartSec=1800
+# 30мин cap: при здоровых API скан занимает 2-5мин; жёсткая стенка на
+# случай зависшего HTTP-соединения, которое requests-timeout не поймал.
