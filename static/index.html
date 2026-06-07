@@ -738,6 +738,7 @@
     <button data-rooms="1к">1к</button>
     <button data-rooms="2к">2к</button>
     <button data-rooms="3к">3к</button>
+    <button data-rooms="4+">4+</button>
     <span style="color:var(--muted);margin-left:8px">|</span>
     <span>Цена:</span>
     <input type="number" id="priceMin" placeholder="от" step="0.5" min="0" style="width:64px">
@@ -1884,7 +1885,12 @@ function filteredRows() {
   if (currentDev !== "all") rows = rows.filter(r => r["застройщик"] === currentDev);
   if (currentCity !== "all") rows = rows.filter(r => r["город"] === currentCity);
   if (currentZk !== "all") rows = rows.filter(r => r["жк"] === currentZk);
-  if (currentRoom !== "all") rows = rows.filter(r => r["комнат"] === currentRoom);
+  if (currentRoom === "4+") {
+    // «4+» — 4-комнатные и больше (4к, 5к, …, 8к)
+    rows = rows.filter(r => { const m = /^(\d+)к$/.exec(r["комнат"] || ""); return m && +m[1] >= 4; });
+  } else if (currentRoom !== "all") {
+    rows = rows.filter(r => r["комнат"] === currentRoom);
+  }
   if (promoOnly) rows = rows.filter(r => r["промо"] === 1);
   if (hideApart) rows = rows.filter(r => !r["апартаменты"]);
   if (areaMin != null) rows = rows.filter(r => r["площадь_м²"] != null && r["площадь_м²"] >= areaMin);
