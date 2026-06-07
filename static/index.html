@@ -1092,7 +1092,24 @@ const columns = [
 
 let table;
 let allRows = [];
-let currentRoom = "all";
+// Множественный выбор комнатности. Пустой набор = «все». Спец-ключ «4+»
+// матчит 4-комнатные и больше.
+let selectedRooms = new Set();
+function roomMatches(roomVal) {
+  if (selectedRooms.size === 0) return true;
+  if (selectedRooms.has(roomVal)) return true;
+  if (selectedRooms.has("4+")) {
+    const m = /^(\d+)к$/.exec(roomVal || "");
+    if (m && +m[1] >= 4) return true;
+  }
+  return false;
+}
+function syncRoomButtons() {
+  document.querySelectorAll(".controls button[data-rooms]").forEach(b => {
+    const k = b.dataset.rooms;
+    b.classList.toggle("active", k === "all" ? selectedRooms.size === 0 : selectedRooms.has(k));
+  });
+}
 let currentCity = "all";
 let currentZk = "all";
 let currentDev = "all";
@@ -1177,7 +1194,7 @@ function writeSaved(list) {
 }
 function snapshotFilters() {
   return {
-    dev: currentDev, city: currentCity, zk: currentZk, room: currentRoom,
+    dev: currentDev, city: currentCity, zk: currentZk, rooms: [...selectedRooms],
     priceMin, priceMax, areaMin, areaMax, promoOnly, hideApart,
     metroMin, metroMax, distMin, distMax, floorMin, floorMax,
     settleYearMax, finishFilter, onlyFree, hasMetro,
@@ -1187,12 +1204,15 @@ function applySnapshot(s) {
   currentDev = s.dev ?? "all";
   currentCity = s.city ?? "all";
   currentZk = s.zk ?? "all";
-  // комната: если значение из снапшота не соответствует кнопке в DOM
-  // (расширилась схема, шумная запись) — откатываем на "all", иначе ни
-  // одна кнопка не activated, фильтр висит «невидимым».
-  const wantedRoom = s.room ?? "all";
+  // комнатность: множественный выбор. Принимаем новый формат `rooms` (массив)
+  // и legacy `room` (строка). Оставляем только ключи, для которых есть кнопка
+  // в DOM (иначе фильтр висел бы «невидимым»).
   const roomBtns = [...document.querySelectorAll(".controls button[data-rooms]")];
-  currentRoom = roomBtns.some(b => b.dataset.rooms === wantedRoom) ? wantedRoom : "all";
+  const validRooms = new Set(roomBtns.map(b => b.dataset.rooms));
+  const wanted = Array.isArray(s.rooms)
+    ? s.rooms
+    : (s.room && s.room !== "all" ? [s.room] : []);
+  selectedRooms = new Set(wanted.filter(k => validRooms.has(k) && k !== "all"));
   // Числовые фильтры — через numOrNull, иначе строка "5,3" → NaN-фильтр
   priceMin = numOrNull(s.priceMin);
   priceMax = numOrNull(s.priceMax);
@@ -1248,8 +1268,7 @@ function applySnapshot(s) {
   if (of) of.checked = onlyFree;
   const hm = document.getElementById("hasMetro");
   if (hm) hm.checked = hasMetro;
-  roomBtns.forEach(b =>
-    b.classList.toggle("active", b.dataset.rooms === currentRoom));
+  syncRoomButtons();
   updateMoreFiltersBadge();
   applyFilter();
 }
@@ -1885,12 +1904,7 @@ function filteredRows() {
   if (currentDev !== "all") rows = rows.filter(r => r["застройщик"] === currentDev);
   if (currentCity !== "all") rows = rows.filter(r => r["город"] === currentCity);
   if (currentZk !== "all") rows = rows.filter(r => r["жк"] === currentZk);
-  if (currentRoom === "4+") {
-    // «4+» — 4-комнатные и больше (4к, 5к, …, 8к)
-    rows = rows.filter(r => { const m = /^(\d+)к$/.exec(r["комнат"] || ""); return m && +m[1] >= 4; });
-  } else if (currentRoom !== "all") {
-    rows = rows.filter(r => r["комнат"] === currentRoom);
-  }
+  if (selectedRooms.size > 0) rows = rows.filter(r => roomMatches(r["комнат"]));
   if (promoOnly) rows = rows.filter(r => r["промо"] === 1);
   if (hideApart) rows = rows.filter(r => !r["апартаменты"]);
   if (areaMin != null) rows = rows.filter(r => r["площадь_м²"] != null && r["площадь_м²"] >= areaMin);
@@ -2244,12 +2258,17 @@ async function load() {
   document.querySelectorAll(".controls button[data-rooms]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const clicked = btn.dataset.rooms;
-      // Повторный клик по активной не-"all" кнопке сбрасывает фильтр
-      const nextRoom = (clicked !== "all" && currentRoom === clicked) ? "all" : clicked;
-      document.querySelectorAll(".controls button[data-rooms]").forEach(b => {
-        b.classList.toggle("active", b.dataset.rooms === nextRoom);
-      });
-      currentRoom = nextRoom;
+      if (clicked === "all") {
+        // «все» — сбрасывает множественный выбор
+        selectedRooms.clear();
+      } else if (selectedRooms.has(clicked)) {
+        // повторный клик снимает эту комнатность
+        selectedRooms.delete(clicked);
+      } else {
+        // добавляем к выбору (можно несколько одновременно)
+        selectedRooms.add(clicked);
+      }
+      syncRoomButtons();
       applyFilter();
     });
   });
@@ -2287,7 +2306,8 @@ async function load() {
   // ✕ Сбросить — обнуляем все переменные, dropdown'ы и инпуты.
   // hideApart НЕ сбрасываем (это безопасный дефолт «без апартаментов»).
   document.getElementById("resetBtn").addEventListener("click", () => {
-    currentDev = currentCity = currentZk = currentRoom = "all";
+    currentDev = currentCity = currentZk = "all";
+    selectedRooms.clear();
     promoOnly = false;
     priceMin = priceMax = areaMin = areaMax = null;
     for (const id of ["devFilter","cityFilter","zkFilter"])
@@ -2295,8 +2315,7 @@ async function load() {
     for (const id of ["priceMin","priceMax","areaMin","areaMax"])
       document.getElementById(id).value = "";
     document.getElementById("promoOnly").checked = false;
-    document.querySelectorAll(".controls button[data-rooms]").forEach(b =>
-      b.classList.toggle("active", b.dataset.rooms === "all"));
+    syncRoomButtons();
     resetExtraFilters();
     applyFilter();
   });
@@ -2320,7 +2339,7 @@ async function load() {
     if (!table) return;
     const date = new Date().toISOString().slice(0, 10);
     const dev = currentDev !== "all" ? "-" + currentDev : "";
-    const rooms = currentRoom !== "all" ? "-" + currentRoom : "";
+    const rooms = selectedRooms.size > 0 ? "-" + [...selectedRooms].join("_") : "";
     const name = `квартиры-${date}${dev}${rooms}.csv`.replace(/\s+/g, "_");
     table.download("csv", name, { bom: true, delimiter: ";" });
   });
