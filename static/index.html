@@ -740,6 +740,13 @@
     <button data-rooms="3к">3к</button>
     <button data-rooms="4+">4+</button>
     <span style="color:var(--muted);margin-left:8px">|</span>
+    <span>Класс:</span>
+    <button data-klass="эконом">эконом</button>
+    <button data-klass="комфорт">комфорт</button>
+    <button data-klass="бизнес">бизнес</button>
+    <button data-klass="премиум">премиум</button>
+    <button data-klass="элит">элит</button>
+    <span style="color:var(--muted);margin-left:8px">|</span>
     <span>Цена:</span>
     <input type="number" id="priceMin" placeholder="от" step="0.5" min="0" style="width:64px">
     <span style="color:var(--muted)">—</span>
@@ -948,6 +955,15 @@ const CITY_LABELS = {
 };
 const cityLabel = (code) => CITY_LABELS[code] || code || "";
 
+// Палитра для бейджей класса ЖК — от дешёвого (серо-зелёный) к дорогому (золото)
+const KLASS_COLORS = {
+  "эконом":  "#64748b",
+  "комфорт": "#0f766e",
+  "бизнес":  "#2563eb",
+  "премиум": "#7c3aed",
+  "элит":    "#b45309",
+};
+
 // Палитра для бейджей застройщиков — стабильные цвета по имени
 const DEV_COLORS = {
   "ПИК":      "#0f766e",
@@ -995,6 +1011,15 @@ const columns = [
   {title: "Город", field: "город", width: 88, headerFilter: "input",
    formatter: (c) => cityLabel(c.getValue())},
   {title: "ЖК", field: "жк", width: 132, headerFilter: "input"},
+  {title: "Класс", field: "класс", width: 92, hozAlign: "center", headerHozAlign: "center",
+   headerFilter: "list",
+   headerFilterParams: {values: ["", "эконом", "комфорт", "бизнес", "премиум", "элит", "н/д"]},
+   formatter: (c) => {
+     const v = c.getValue();
+     if (!v || v === "н/д") return '<span style="color:var(--muted)">—</span>';
+     const color = KLASS_COLORS[v] || "#6b7280";
+     return `<span class="dev-tag" style="background:${color}">${escapeHtml(v)}</span>`;
+   }},
   {title: "Метро", field: "метро", width: 120, headerFilter: "input",
    formatter: (c) => {
      const r = c.getRow().getData();
@@ -1110,6 +1135,17 @@ function syncRoomButtons() {
     b.classList.toggle("active", k === "all" ? selectedRooms.size === 0 : selectedRooms.has(k));
   });
 }
+// Множественный выбор класса ЖК. Пустой набор = «все».
+let selectedClasses = new Set();
+function classMatches(klassVal) {
+  if (selectedClasses.size === 0) return true;
+  return selectedClasses.has(klassVal);
+}
+function syncClassButtons() {
+  document.querySelectorAll(".controls button[data-klass]").forEach(b => {
+    b.classList.toggle("active", selectedClasses.has(b.dataset.klass));
+  });
+}
 let currentCity = "all";
 let currentZk = "all";
 let currentDev = "all";
@@ -1195,6 +1231,7 @@ function writeSaved(list) {
 function snapshotFilters() {
   return {
     dev: currentDev, city: currentCity, zk: currentZk, rooms: [...selectedRooms],
+    classes: [...selectedClasses],
     priceMin, priceMax, areaMin, areaMax, promoOnly, hideApart,
     metroMin, metroMax, distMin, distMax, floorMin, floorMax,
     settleYearMax, finishFilter, onlyFree, hasMetro,
@@ -1213,6 +1250,10 @@ function applySnapshot(s) {
     ? s.rooms
     : (s.room && s.room !== "all" ? [s.room] : []);
   selectedRooms = new Set(wanted.filter(k => validRooms.has(k) && k !== "all"));
+  // класс ЖК: множественный выбор. Оставляем только ключи с кнопкой в DOM.
+  const classBtns = [...document.querySelectorAll(".controls button[data-klass]")];
+  const validClasses = new Set(classBtns.map(b => b.dataset.klass));
+  selectedClasses = new Set((Array.isArray(s.classes) ? s.classes : []).filter(k => validClasses.has(k)));
   // Числовые фильтры — через numOrNull, иначе строка "5,3" → NaN-фильтр
   priceMin = numOrNull(s.priceMin);
   priceMax = numOrNull(s.priceMax);
@@ -1269,6 +1310,7 @@ function applySnapshot(s) {
   const hm = document.getElementById("hasMetro");
   if (hm) hm.checked = hasMetro;
   syncRoomButtons();
+  syncClassButtons();
   updateMoreFiltersBadge();
   applyFilter();
 }
@@ -1620,6 +1662,7 @@ function renderDetail(r) {
       <div class="detail-kv">
         <div class="k">Застройщик</div><div class="v">${E(r["застройщик"])}</div>
         <div class="k">ЖК</div><div class="v">${E(r["жк"])}</div>
+        <div class="k">Класс</div><div class="v">${r["класс"] && r["класс"] !== "н/д" ? E(r["класс"]) : "—"}</div>
         <div class="k">Корпус</div><div class="v">${E(r["корпус"])}</div>
         <div class="k">Секция</div><div class="v">${E(r["секция"])}</div>
         <div class="k">Этаж</div><div class="v">${floorStr}</div>
@@ -1905,6 +1948,7 @@ function filteredRows() {
   if (currentCity !== "all") rows = rows.filter(r => r["город"] === currentCity);
   if (currentZk !== "all") rows = rows.filter(r => r["жк"] === currentZk);
   if (selectedRooms.size > 0) rows = rows.filter(r => roomMatches(r["комнат"]));
+  if (selectedClasses.size > 0) rows = rows.filter(r => classMatches(r["класс"]));
   if (promoOnly) rows = rows.filter(r => r["промо"] === 1);
   if (hideApart) rows = rows.filter(r => !r["апартаменты"]);
   if (areaMin != null) rows = rows.filter(r => r["площадь_м²"] != null && r["площадь_м²"] >= areaMin);
@@ -2272,6 +2316,16 @@ async function load() {
       applyFilter();
     });
   });
+  // Класс ЖК — множественный выбор (toggle), как комнатность
+  document.querySelectorAll(".controls button[data-klass]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const clicked = btn.dataset.klass;
+      if (selectedClasses.has(clicked)) selectedClasses.delete(clicked);
+      else selectedClasses.add(clicked);
+      syncClassButtons();
+      applyFilter();
+    });
+  });
   // Цена от/до — оба поля живут синхронно, debounce на keystroke
   const onPriceChange = debounce(() => {
     const a = document.getElementById("priceMin").value.trim();
@@ -2308,6 +2362,7 @@ async function load() {
   document.getElementById("resetBtn").addEventListener("click", () => {
     currentDev = currentCity = currentZk = "all";
     selectedRooms.clear();
+    selectedClasses.clear();
     promoOnly = false;
     priceMin = priceMax = areaMin = areaMax = null;
     for (const id of ["devFilter","cityFilter","zkFilter"])
@@ -2316,6 +2371,7 @@ async function load() {
       document.getElementById(id).value = "";
     document.getElementById("promoOnly").checked = false;
     syncRoomButtons();
+    syncClassButtons();
     resetExtraFilters();
     applyFilter();
   });
@@ -2340,7 +2396,8 @@ async function load() {
     const date = new Date().toISOString().slice(0, 10);
     const dev = currentDev !== "all" ? "-" + currentDev : "";
     const rooms = selectedRooms.size > 0 ? "-" + [...selectedRooms].join("_") : "";
-    const name = `квартиры-${date}${dev}${rooms}.csv`.replace(/\s+/g, "_");
+    const klass = selectedClasses.size > 0 ? "-" + [...selectedClasses].join("_") : "";
+    const name = `квартиры-${date}${dev}${rooms}${klass}.csv`.replace(/\s+/g, "_");
     table.download("csv", name, { bom: true, delimiter: ";" });
   });
   // Resize: при переходе desktop↔mobile перерендериваем карточки если
@@ -2546,11 +2603,12 @@ function buildZhkList() {
   for (const r of allRows) {
     const id = r.block_id; if (id == null) continue;
     let e = price[id];
-    if (!e) e = price[id] = { count: 0, prices: [], meters: [], rooms: new Set() };
+    if (!e) e = price[id] = { count: 0, prices: [], meters: [], rooms: new Set(), klass: null };
     e.count++;
     const p = r["цена_по_программе"] || r["базовая_цена"]; if (p) e.prices.push(p);
     if (r["база_за_м²"]) e.meters.push(r["база_за_м²"]);
     if (r["комнат"]) e.rooms.add(r["комнат"]);
+    if (!e.klass && r["класс"]) e.klass = r["класс"];   // класс одинаков для всего ЖК
   }
   const out = [];
   for (const id in blockVel) {
@@ -2565,6 +2623,7 @@ function buildZhkList() {
       minPrice: p.prices && p.prices.length ? arrayMin(p.prices) : null,
       medMeter: p.meters && p.meters.length ? median(p.meters) : null,
       rooms: p.rooms ? [...p.rooms] : [],
+      klass: p.klass || null,
       curve: (invByBlock[id] || []).map(x => x.listed),
     });
   }
@@ -2587,9 +2646,12 @@ function zhkCardHtml(z) {
   const curve = z.curve.length >= 2
     ? `<div class="zk-curve"><div class="cap">остаток в продаже (динамика)</div>${renderInlineSparkline(z.curve)}</div>`
     : "";
+  const klassChip = (z.klass && z.klass !== "н/д")
+    ? ` · <span class="dev-tag" style="background:${KLASS_COLORS[z.klass] || "#6b7280"}">${escapeHtml(z.klass)}</span>`
+    : "";
   return `<div class="zhk-card" data-zhk-id="${z.id}">
     <div class="zk-name">${escapeHtml(z.name)}</div>
-    <div class="zk-sub">${escapeHtml(z.dev || "")} · ${cityLabel(z.city)}${metroTxt}</div>
+    <div class="zk-sub">${escapeHtml(z.dev || "")}${klassChip} · ${cityLabel(z.city)}${metroTxt}</div>
     <div class="zk-price">от ${fmtRub(z.minPrice)} <small>· ${z.medMeter ? Math.round(z.medMeter).toLocaleString("ru-RU") + " ₽/м²" : "—"}</small></div>
     <div class="zk-badges">${badges.join("")}</div>
     ${curve}

@@ -1,8 +1,10 @@
 import sqlite3
+import statistics
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from importlib.resources import files
 
+from novex import klass
 from novex.velocity import build_velocity_tables
 
 _MSK = timezone(timedelta(hours=3))
@@ -47,6 +49,10 @@ def _migrate_blocks(conn: sqlite3.Connection) -> None:
         )
     if "city" not in existing:
         conn.execute("ALTER TABLE blocks ADD COLUMN city TEXT")
+    # `klass` — класс ЖК (2026-06-09). Заполняется refresh_block_classes()
+    # из novex.klass (курируемый маппинг + дефолт застройщика + авто по цене).
+    if "klass" not in existing:
+        conn.execute("ALTER TABLE blocks ADD COLUMN klass TEXT")
     # Backfill для строк без city — зеркало novex.geo.city_from_address.
     # `WHERE city IS NULL` делает повторный запуск дешёвым no-op'ом.
     # На минимальных легаси-схемах без `address` (фикстуры тестов) пропускаем:
@@ -231,6 +237,7 @@ SELECT
     b.developer               AS застройщик,
     COALESCE(b.name, 'block ' || f.block_id) AS жк,
     COALESCE(b.city, 'msk')   AS город,
+    COALESCE(b.klass, 'н/д')  AS класс,
     b.metro_name              AS метро,
     CASE b.metro_line_type
         WHEN 1 THEN 'M'
@@ -336,6 +343,42 @@ def _create_views(conn: sqlite3.Connection) -> None:
         conn.execute(f"CREATE VIEW {name} AS {sql}")
 
 
+def refresh_block_classes(conn: sqlite3.Connection) -> None:
+    """Проставляет blocks.klass для всех ЖК (см. novex.klass).
+
+    Класс — гибрид: курируемый маппинг + дефолт застройщика + авто по
+    медианной цене за м². Цену берём из последнего среза каждого блока
+    (base_meter_price); курируемым/дефолтным ЖК цена не нужна, поэтому блоки
+    без снапшотов всё равно классифицируются. Вызывается ПЕРЕД материализацией
+    today_all — view читает b.klass.
+    """
+    # Медиана base_meter_price по последнему срезу каждого блока.
+    rows = conn.execute(
+        """
+        WITH block_latest AS (
+            SELECT f.block_id AS bid, MAX(s.scan_date) AS sd
+            FROM snapshots s JOIN flats f ON f.id = s.flat_id
+            GROUP BY f.block_id
+        )
+        SELECT f.block_id, s.base_meter_price
+        FROM snapshots s
+        JOIN flats f ON f.id = s.flat_id
+        JOIN block_latest bl ON bl.bid = f.block_id AND bl.sd = s.scan_date
+        WHERE s.base_meter_price IS NOT NULL AND s.base_meter_price > 0
+        """
+    ).fetchall()
+    prices: dict[int, list[float]] = {}
+    for bid, mp in rows:
+        prices.setdefault(bid, []).append(mp)
+    median_price = {bid: statistics.median(v) for bid, v in prices.items()}
+
+    blocks = conn.execute("SELECT id, developer, city FROM blocks").fetchall()
+    for bid, developer, city in blocks:
+        k = klass.classify(bid, developer, city, median_price.get(bid))
+        conn.execute("UPDATE blocks SET klass=? WHERE id=?", (k, bid))
+    conn.commit()
+
+
 def refresh_materialized(conn: sqlite3.Connection) -> None:
     """Заменяет today_all / today_one_room / flat_sparkline_30d из VIEW в TABLE.
 
@@ -350,6 +393,9 @@ def refresh_materialized(conn: sqlite3.Connection) -> None:
     # Datasette-читатель держит WAL, успех зависит от busy_timeout вызывающего.
     # Ставим явно тут, чтобы материализатор был устойчив из любой точки входа.
     conn.execute("PRAGMA busy_timeout=30000")
+    # Класс ЖК — ДО today_all: view читает b.klass. Своя транзакция (commit
+    # внутри), завершается до BEGIN IMMEDIATE материализатора.
+    refresh_block_classes(conn)
     cutoff = (datetime.now(_MSK) - timedelta(days=30)).strftime("%Y-%m-%d")
     sources = [
         # ВАЖЕН ПОРЯДОК: today_one_room SELECT'ит из today_all,

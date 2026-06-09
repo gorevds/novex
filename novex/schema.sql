@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS blocks (
     address            TEXT,
     city               TEXT,        -- код города: 'msk' | 'mo' | 'spb' | ... (см. novex.geo)
     distance_km        REAL,        -- расстояние от центра ПРАВИЛЬНОГО города (по city)
-    floors_max         INTEGER      -- этажность здания
+    floors_max         INTEGER,     -- этажность здания
+    klass              TEXT         -- класс ЖК: эконом|комфорт|бизнес|премиум|элит (см. novex.klass)
 );
 
 CREATE TABLE IF NOT EXISTS flats (
